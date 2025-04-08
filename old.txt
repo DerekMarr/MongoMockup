@@ -1,0 +1,52 @@
+const fs = require('fs');
+const path = require('path');
+const { MongoClient } = require('mongodb');
+
+const uri = process.env.MONGO_URI || 'mongodb://localhost:27017';
+const client = new MongoClient(uri);
+const watchFolder = path.join(__dirname, 'uploads');
+
+async function run() {
+  try {
+    await client.connect();
+    console.log('Connected to MongoDB');
+
+    const db = client.db('fileUploader');
+    const collection = db.collection('jsonFiles');
+
+    fs.watch(watchFolder, async (eventType, filename) => {
+      if (filename && eventType === 'rename' && filename.endsWith('.json')) {
+        const filePath = path.join(watchFolder, filename);
+        setTimeout(() => {
+          if (fs.existsSync(filePath)) {
+            fs.readFile(filePath, 'utf8', async (err, fileData) => {
+              if (err) {
+                console.error('Error reading file', err);
+                return;
+              }
+
+              try {
+                const parsed = JSON.parse(fileData);
+                await collection.insertOne({
+                  filename: filename,
+                  data: parsed,
+                  uploadedAt: new Date()
+                });
+
+                console.log(`Inserted ${filename}`);
+              } catch (parseErr) {
+                console.error(`Failed to parse ${filename}:`, parseErr.message);
+              }
+            });
+          }
+        }, 100);
+      }
+    });
+
+    console.log(`Watching ${watchFolder}`);
+  } catch (err) {
+    console.error('MongoDB error', err);
+  }
+}
+
+run();
