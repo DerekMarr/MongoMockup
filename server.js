@@ -2,11 +2,13 @@ require('dotenv').config();
 const express = require('express');
 const { MongoClient } = require('mongodb');
 const bodyParser = require('body-parser');
+const multer = require('multer');
+const upload = multer({ storage: multer.memoryStorage() });
 
 const app = express();
 const port = process.env.PORT || 3000;
 const uri = process.env.MONGO_URI || 'mongodb://localhost:27017';
-
+console.log("Connecting to MongoDB at:", uri);
 const client = new MongoClient(uri);
 let collection;
 
@@ -28,6 +30,42 @@ async function start() {//connect
     process.exit(1);
   }
 }
+
+const API_KEY = process.env.API_KEY;
+
+app.use((req, res, next) => {
+  const key = req.headers['x-api-key'];
+  if (API_KEY && key !== API_KEY) {
+    return res.status(403).json({ error: 'Unauthorized – missing or invalid API key' });
+  }
+  next();
+});
+
+app.post('/upload', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file || req.file.mimetype !== 'application/json') {
+      return res.status(400).json({ error: 'Please upload a valid .json file' });
+    }
+
+    const rawContent = req.file.buffer.toString('utf-8');
+    const parsed = JSON.parse(rawContent);
+
+    const db = client.db('fileUploader');
+    const collection = db.collection('jsonFiles');
+
+    await collection.insertOne({
+      filename: req.file.originalname,
+      data: parsed,
+      uploadedAt: new Date()
+    });
+
+    res.status(200).json({ message: 'File uploaded and saved to MongoDB' });
+
+  } catch (err) {
+    console.error('Upload error:', err);
+    res.status(500).json({ error: 'Failed to upload file' });
+  }
+});
 
 app.get('/files', async (req, res) => { // get /files  all
   try {
