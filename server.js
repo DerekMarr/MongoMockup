@@ -100,4 +100,28 @@ app.post('/search', async (req, res) => { // post /search value
   }
 });
 
+app.get('/download/:filename', async (req, res) => {
+  try {
+    const db = client.db('fileUploader');
+    const collection = db.collection('jsonFiles');
+
+    const file = await collection.findOne({ filename: req.params.filename });
+
+    if (!file) {
+      return res.status(404).json({ error: 'File not found' });
+    }
+
+    const jsonBuffer = Buffer.from(JSON.stringify(file.data, null, 2));
+
+    res.setHeader('Content-Disposition', `attachment; filename="${file.filename}"`);
+    res.setHeader('Content-Type', 'application/json');
+    res.send(jsonBuffer);
+
+  } catch (err) {
+    console.error('Download error:', err);
+    res.status(500).json({ error: 'Failed to download file' });
+  }
+});
+
+
 start();
