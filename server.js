@@ -41,23 +41,39 @@ app.use((req, res, next) => {
 
 app.post('/upload', upload.single('file'), async (req, res) => {
   try {
-    if (!req.file || req.file.mimetype !== 'application/json') {
-      return res.status(400).json({ error: 'Please upload a valid json file' });
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
     }
 
-    const rawContent = req.file.buffer.toString('utf-8');
-    const parsed = JSON.parse(rawContent);
+    const { originalname, buffer, mimetype } = req.file;
+    const extension = path.extname(originalname).toLowerCase();
 
     const db = client.db('fileUploader');
-    const collection = db.collection('jsonFiles');
 
-    await collection.insertOne({
-      filename: req.file.originalname,
-      data: parsed,
+    let parsedData;
+    let collectionName;
+
+    if (extension === '.json') {
+      parsedData = JSON.parse(buffer.toString('utf8'));
+      collectionName = 'jsonFiles';
+    } else if (extension === '.txt') {
+      parsedData = buffer.toString('utf8');
+      collectionName = 'textFiles';
+    } else if (extension === '.bson') {
+      const BSON = require('bson');
+      parsedData = BSON.deserialize(buffer);
+      collectionName = 'bsonFiles';
+    } else {
+      return res.status(400).json({ error: 'Unsupported file type' });
+    }
+
+    await db.collection(collectionName).insertOne({
+      filename: originalname,
+      data: parsedData,
       uploadedAt: new Date()
     });
 
-    res.status(200).json({ message: 'File uploaded' });
+    res.status(200).json({ message: `${extension} file uploaded and saved` });
 
   } catch (err) {
     console.error('Upload error:', err);
@@ -84,39 +100,62 @@ app.get('/files/:filename', async (req, res) => { // get /files/:filename one
   }
 });
 
-app.post('/search', async (req, res) => { // post /search value
-  const { field, value } = req.body;
-  if (!field || typeof value === 'undefined') {
-    return res.status(400).json({ error: 'incomplete request body' });
-  }
-
+app.post('/search', async (req, res) => {
   try {
+    const { field, value, fileType = 'json' } = req.body;
+
+    const collectionMap = {
+      json: 'jsonFiles',
+      txt: 'textFiles',
+      bson: 'bsonFiles'
+    };
+
+    const collectionName = collectionMap[fileType];
+    if (!collectionName) return res.status(400).json({ error: 'Invalid file type' });
+
     const query = {};
     query[`data.${field}`] = value;
-    const results = await collection.find(query).toArray();
-    res.json(results);
+
+    const db = client.db('fileUploader');
+    const results = await db.collection(collectionName).find(query).toArray();
+
+    res.status(200).json({ count: results.length, results });
+
   } catch (err) {
-    res.status(500).json({ error: 'search failed' });
+    console.error('Search error:', err);
+    res.status(500).json({ error: 'Search failed' });
   }
 });
 
 app.get('/download/:filename', async (req, res) => {
   try {
+    const { type = 'json' } = req.query;
+    const collectionMap = {
+      json: 'jsonFiles',
+      txt: 'textFiles',
+      bson: 'bsonFiles'
+    };
+    const collectionName = collectionMap[type];
+    if (!collectionName) return res.status(400).json({ error: 'Invalid file type' });
+
     const db = client.db('fileUploader');
-    const collection = db.collection('jsonFiles');
+    const file = await db.collection(collectionName).findOne({ filename: req.params.filename });
 
-    const file = await collection.findOne({ filename: req.params.filename });
+    if (!file) return res.status(404).json({ error: 'File not found' });
 
-    if (!file) {
-      return res.status(404).json({ error: 'File not found' });
-    }
-
-    const jsonBuffer = Buffer.from(JSON.stringify(file.data, null, 2));
+    const content =
+      type === 'txt' ? file.data :
+      type === 'json' ? JSON.stringify(file.data, null, 2) :
+      type === 'bson' ? Buffer.from(require('bson').serialize(file.data)) : '';
 
     res.setHeader('Content-Disposition', `attachment; filename="${file.filename}"`);
-    res.setHeader('Content-Type', 'application/json');
-    res.send(jsonBuffer);
+    res.setHeader('Content-Type',
+      type === 'json' ? 'application/json' :
+      type === 'txt' ? 'text/plain' :
+      'application/octet-stream'
+    );
 
+    res.send(content);
   } catch (err) {
     console.error('Download error:', err);
     res.status(500).json({ error: 'Failed to download file' });
