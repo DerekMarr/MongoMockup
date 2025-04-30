@@ -62,7 +62,11 @@ app.post('/upload', upload.single('file'), async (req, res) => {
       collectionName = 'textFiles';
     } else if (extension === '.bson') {
       const BSON = require('bson');
-      parsedData = BSON.deserialize(buffer);
+      try {
+        parsedData = BSON.deserialize(buffer);
+      } catch (bsonErr) {
+        return res.status(400).json({ error: 'invalid BSON file' });
+      }
       collectionName = 'bsonFiles';
     } else {
       return res.status(400).json({ error: 'Unsupported file type' });
@@ -91,13 +95,31 @@ app.get('/files', async (req, res) => { // get /files  all
   }
 });
 
-app.get('/files/:filename', async (req, res) => { // get /files/:filename one
+app.get('/files/:filename', async (req, res) => {
   try {
-    const file = await collection.findOne({ filename: req.params.filename });
-    if (!file) return res.status(404).json({ error: 'file not found' });
+    const { filename } = req.params;
+    const extension = path.extname(filename).toLowerCase();
+
+    const collectionMap = {
+      '.json': 'jsonFiles',
+      '.txt': 'textFiles',
+      '.bson': 'bsonFiles'
+    };
+
+    const collectionName = collectionMap[extension];
+    if (!collectionName) {
+      return res.status(400).json({ error: 'Unsupported file extension' });
+    }
+
+    const db = client.db('fileUploader');
+    const file = await db.collection(collectionName).findOne({ filename });
+
+    if (!file) return res.status(404).json({ error: 'File not found' });
+
     res.json(file);
   } catch (err) {
-    res.status(500).json({ error: 'failed to get file' });
+    console.error('Get file error:', err);
+    res.status(500).json({ error: 'Failed to get file' });
   }
 });
 
