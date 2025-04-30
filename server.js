@@ -3,6 +3,7 @@ const express = require('express');
 const { MongoClient } = require('mongodb');
 const bodyParser = require('body-parser');
 const multer = require('multer');
+const path = require('path');
 const upload = multer({ storage: multer.memoryStorage() });
 
 const app = express();
